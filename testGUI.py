@@ -7,22 +7,35 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QWidget,
     QVBoxLayout,
-    QLineEdit
+    QLineEdit,
+    QSizePolicy,
+    QLabel,
+    QGridLayout
 )
 from PyQt6.QtGui import QIcon, QAction
 from pathlib import Path
 import sys
 
+import matplotlib
+matplotlib.use('Qt5Agg')
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
 import pandas as pd
 import numpy as np
+import seaborn as sns
 import collections
+
+
+df = {}
+tips = sns.load_dataset("tips")
 
 
 class GUI(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setGeometry(300, 300, 350, 100)
+        self.setGeometry(300, 300, 600, 500)
         self.setWindowTitle('Automated Fundamental Analysis')
 
         self.generalLayout = QVBoxLayout()
@@ -35,20 +48,29 @@ class GUI(QMainWindow):
         openFile.setStatusTip('Open new File')
         openFile.triggered.connect(self.showDialog)
 
-        downloadButton = QPushButton("Download CSV")
+        downloadButton = QPushButton("Download Analysis")
         downloadButton.clicked.connect(self.downloadFile)
 
-        self.display = QLineEdit()
-        self.display.setReadOnly(True)
+        downloadSampleButton = QPushButton("Download Sample CSV")
+        downloadSampleButton.clicked.connect(self.downloadSampleFile)
+
+        visualizeButton = QPushButton("Visualize Data")
+        visualizeButton.clicked.connect(self.visualizeData)
+
+        # self.display = QLineEdit()
+        # self.display.setReadOnly(True)
         # self.display.setText("Downloaded Successfully!")
 
-        layout = QHBoxLayout()
+        # layout = QHBoxLayout()
+        layout = QVBoxLayout()
+        layout.addWidget(downloadSampleButton)
         layout.addWidget(downloadButton)
-        layout.addWidget(self.display)
+        layout.addWidget(visualizeButton)
+        # layout.addWidget(self.display)
         self.generalLayout.addLayout(layout)
 
         menubar = self.menuBar()
-        fileMenu = menubar.addMenu('&Upload Report')
+        fileMenu = menubar.addMenu('&Upload Fundamental Data')
         fileMenu.addAction(openFile)
 
 
@@ -64,15 +86,17 @@ class GUI(QMainWindow):
 
     def automatedFundamentalAnalysis(self, fileName):
         grading_metrics = {'Valuation' : ['Fwd P/E', 'PEG', 'P/S', 'P/B', 'P/FCF'],
-                            'Profitability' : ['Profit M', 'Oper M', 'Gross M', 'ROE', 'ROA'],
-                            'Growth' : ['EPS this Y', 'EPS next Y', 'EPS next 5Y', 'Sales Q/Q', 'EPS Q/Q'],
-                            'Performance' : ['Perf Month', 'Perf Quart', 'Perf Half', 'Perf Year', 'Perf YTD', 'Volatility M']
-                        }
+                        'Profitability' : ['Profit M', 'Oper M', 'Gross M', 'ROE', 'ROA'],
+                        'Growth' : ['EPS this Y', 'EPS next Y', 'EPS next 5Y', 'Sales Q/Q', 'EPS Q/Q'],
+                        'Performance' : ['Perf Month', 'Perf Quart', 'Perf Half', 'Perf Year', 'Perf YTD', 'Volatility M'],
+                        'KPI' : ['Scale (billion $)', 'Labor Cost (billion $)', 'Operating Leverage (DOL)', 'C-Suite Diversity', 'Technological Enabler', 'ESG Score']
+                    }
 
         grade_scores = {'A+' : 4.3, 'A' : 4.0, 'A-' : 3.7, 'B+' : 3.3, 'B' : 3.0, 'B-' : 2.7, 
                         'C+' : 2.3, 'C' : 2.0, 'C-' : 1.7, 'D+' : 1.3, 'D' : 1.0, 'D-' : 0.7, 'F' : 0.0
                     }
 
+        global df
         df = pd.read_csv(fileName, index_col = 0)
         sector_data = collections.defaultdict(lambda : collections.defaultdict(dict))
         data_to_add = collections.defaultdict(list)
@@ -132,11 +156,11 @@ class GUI(QMainWindow):
                     return grade
 
         sectors = df['Sector'].unique()
-        metrics = df.columns[6: -3]
+        metrics = df.columns[6: -9]
         for sector in sectors:
             rows = df.loc[df['Sector'] == sector]
             for metric in metrics:
-                rows[metric] = rows[metric].str.rstrip('%')
+                rows[metric] = rows[metric].astype(str).str.rstrip('%')
                 rows[metric] = pd.to_numeric(rows[metric], errors='coerce')
                 data = remove_outliers(rows[metric], 2)
                 
@@ -145,6 +169,17 @@ class GUI(QMainWindow):
                 sector_data[sector][metric]['90Pct'] = data.quantile(0.9)
                 sector_data[sector][metric]['Std'] = np.std(data, axis=0) / 5
 
+        metrics = df.columns[-9:-3]
+        for sector in sectors:
+            rows = df.loc[df['Sector'] == sector]
+            for metric in metrics:
+                rows[metric] = pd.to_numeric(rows[metric], errors='coerce')
+                data = remove_outliers(rows[metric], 2)
+                
+                sector_data[sector][metric]['Median'] = data.median(skipna=True)
+                sector_data[sector][metric]['10Pct'] = data.quantile(0.1)
+                sector_data[sector][metric]['90Pct'] = data.quantile(0.9)
+                sector_data[sector][metric]['Std'] = np.std(data, axis=0) / 5
 
         for row in df.iterrows():
             ticker, sector = row[1]['Ticker'], row[1]['Sector']
@@ -156,19 +191,69 @@ class GUI(QMainWindow):
             data_to_add['Profitability Grade'].append(convert_to_letter_grade(category_grades['Profitability'][-1]))
             data_to_add['Growth Grade'].append(convert_to_letter_grade(category_grades['Growth'][-1]))
             data_to_add['Performance Grade'].append(convert_to_letter_grade(category_grades['Performance'][-1]))
+            data_to_add['KPI Grade'].append(convert_to_letter_grade(category_grades['KPI'][-1]))
 
         df['Overall Rating'] = data_to_add['Overall Rating']
         df['Valuation Grade'] = data_to_add['Valuation Grade']
         df['Profitability Grade'] = data_to_add['Profitability Grade']
         df['Growth Grade'] = data_to_add['Growth Grade']
         df['Performance Grade'] = data_to_add['Performance Grade']    
-        df['Percent Diff'] = (pd.to_numeric(df['Target Price'], errors='coerce') - pd.to_numeric(df['Price'], errors='coerce')) / pd.to_numeric(df['Price'], errors='coerce') * 100
+        df['KPI Grade'] = data_to_add['Performance Grade']
+        df["Overall Rating"] = df["Overall Rating"] * 100 / df["Overall Rating"].max()
         print(df)
-        df.to_csv('result.csv', index = False)
 
 
     def downloadFile(self):
+        global df
         print("Downloaded!!")
+        df.to_csv('result.csv', index = False)
+
+
+    def downloadSampleFile(self):
+        sampleDF = pd.DataFrame(columns = ['Ticker', 'Company', 'Market Cap', 'Sector', 'Industry', 'Country',
+                                            'Fwd P/E', 'PEG', 'P/S', 'P/B', 'P/C', 'P/FCF', 'Dividend',
+                                            'Payout Ratio', 'EPS this Y', 'EPS next Y', 'EPS past 5Y',
+                                            'EPS next 5Y', 'Sales past 5Y', 'EPS Q/Q', 'Sales Q/Q', 'Insider Own',
+                                            'Insider Trans', 'Inst Own', 'Inst Trans', 'Short Ratio', 'ROA', 'ROE',
+                                            'ROI', 'Curr R', 'Quick R', 'LTDebt/Eq', 'Debt/Eq', 'Gross M', 'Oper M',
+                                            'Profit M', 'Perf Month', 'Perf Quart', 'Perf Half', 'Perf Year',
+                                            'Perf YTD', 'Volatility M', 'SMA20', 'SMA50', 'SMA200', '52W High',
+                                            '52W Low', 'RSI', 'Scale (billion $)', 'Labor Cost (billion $)',
+                                            'Operating Leverage (DOL)', 'C-Suite Diversity',
+                                            'Technological Enabler', 'ESG Score', 'Earnings', 'Price',
+                                            'Target Price'])
+        sampleDF.to_csv('sample.csv', index = False)
+
+
+    def seabornplot1(self):
+        value = "Industrials"
+        newDf = df.query("Sector == @value")
+        ax = sns.distplot(newDf["Overall Rating"], hist=True, color="r")
+        plt.title("Sector vs Company") 
+        plt.ylabel("Density")
+        plt.legend(loc='best')
+        return ax.figure
+
+
+    def seabornplot2(self):
+        newDf = df.groupby(by = "Industry").mean()
+        ax = sns.distplot(newDf["Overall Rating"], hist=True, color="g")
+        plt.title("Sector vs Industry")
+        plt.ylabel("Density")
+        plt.legend(loc='best')
+        return ax.figure
+
+
+    def visualizeData(self):
+        fig1 = self.seabornplot1()
+        fig2 = self.seabornplot2()
+        self.canvas1 = FigureCanvas(fig1)
+        # self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.canvas1.updateGeometry()
+
+        layout = QHBoxLayout()
+        layout.addWidget(self.canvas1)
+        self.generalLayout.addLayout(layout)
 
 
 def main():
